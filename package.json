@@ -1,0 +1,22 @@
+{
+  "name": "arkham-rec-provider",
+  "version": "1.0.0",
+  "main": "build/index.js",
+  "scripts": {
+    "start": "tsc && node build/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Sy Brand",
+  "license": "AGPL-3.0-only",
+  "description": "",
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "globals": "^15.13.0",
+    "typescript-eslint": "^8.18.1"
+  },
+  "dependencies": {
+    "typescript": "^5.7.2"
+  }
+}
