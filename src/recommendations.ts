@@ -3,6 +3,8 @@ import { CardInclusions, Decklists, DecksByInvestigator, InvestigatorCounts } fr
 import { Id } from "./stolen.types";
 import { Index, Recommendation, RecommendationAnalysisAlgorithm, RecommendationRequest } from "./index.types";
 
+type DBAccessor = (query: string, values?: any) => Promise<any>;
+
 function percentileRank(values: number[], value: number) {
     const sortedValues = values.slice().sort((a, b) => a - b);
     const firstGreater = sortedValues.findIndex((v) => v > value);
@@ -17,98 +19,124 @@ export function dateToMonth(date: Date) {
     return `${date.getFullYear()}-${date.getMonth() + 1}`;
 }
 
-function findInclusionsOfCardForInvestigator(
+async function findInclusionsOfCardForInvestigator(
+    investigatorCode: string,
     cardCode: string,
-    deckInclusions: CardInclusions,
-    sideDeckInclusions: CardInclusions,
     includeSideDeck: boolean,
+    dateRange: [Date, Date],
     validDecks: Record<Id, 1>,
-): number {
-    let ret = new Set<Id>();
-    const isValidDeck = (deckCode: Id) => validDecks[deckCode];
-    if (deckInclusions[cardCode]) {
-        ret = new Set(deckInclusions[cardCode].filter(isValidDeck));
-    }
-    if (includeSideDeck && sideDeckInclusions[cardCode]) {
-        sideDeckInclusions[cardCode].filter(isValidDeck).forEach((deckCode) => ret.add(deckCode));
-    }
-    return ret.size;
+    db: DBAccessor
+): Promise<number> {
+    const query = `
+    SELECT DISTINCT d.id
+    FROM decklists d
+    JOIN (
+        SELECT id, card_code
+        FROM decklist_slots
+        WHERE card_code = $1
+        ${includeSideDeck ? `
+        UNION ALL
+        SELECT id, card_code
+        FROM decklist_side_slots
+        WHERE card_code = $2` : ''}
+    ) ds ON d.id = ds.id
+    WHERE d.investigator_code = $3
+      AND d.date_creation BETWEEN $4 AND $5
+    `;
+    const params = [cardCode, cardCode, investigatorCode, dateRange[0], dateRange[1]];
+    const res = await db(query, params);
+    return res.filter((row: any) => validDecks[row.id]).length;
 }
 
-function monthsInRange(dateRange: [Date, Date]): string[] {
-    const start = dateRange[0];
-    const end = dateRange[1];
-    const months = [];
-    for (let date = new Date(start); date < end; date.setMonth(date.getMonth() + 1)) {
-        months.push(dateToMonth(date));
-    }
-    return months;
+async function getNDecksForOtherInvestigators(investigatorCode: string, dateRange: [Date, Date], db: DBAccessor) {
+    const query = `
+    SELECT d.investigator_code, COUNT(DISTINCT d.id) AS deck_count
+    FROM decklists d
+    WHERE d.investigator_code != $1
+        AND d.date_creation BETWEEN $2 AND $3
+    GROUP BY d.investigator_code`;
+    const params = [investigatorCode, dateRange[0], dateRange[1]];
+    return await db(query, params);
 }
 
-function decksForInvestigatorInDateRange(
-    monthsFilter: string[],
-    investigatorCode: string,
-    decksByInvestigator: DecksByInvestigator
-): number {
-    return monthsFilter.reduce((acc, month) => {
-        return decksByInvestigator[investigatorCode][month] ?
-            acc + Object.keys(decksByInvestigator[investigatorCode][month]).length
-            : acc;
-    }, 0);
+async function getNDecksForOtherInvestigatorsIncludingCard(
+    investigatorCode: string, 
+    cardCode: string, 
+    dateRange: [Date, Date], 
+    includeSideDeck: boolean,
+    db: DBAccessor
+) {
+    const query = `
+    SELECT d.investigator_code, COUNT(DISTINCT d.id) AS deck_count
+    FROM decklists d
+    JOIN (
+        SELECT id, card_code
+        FROM decklist_slots
+        WHERE card_code = $1
+        ${includeSideDeck ? `
+        UNION ALL
+        SELECT id, card_code
+        FROM decklist_side_slots
+        WHERE card_code = $2` : ''}
+    ) ds ON d.id = ds.id
+    WHERE d.investigator_code != $3
+      AND d.date_creation BETWEEN $4 AND $5
+    GROUP BY d.investigator_code
+`;
+
+    const params = [cardCode, cardCode, investigatorCode, dateRange[0], dateRange[1]];
+    return await db(query, params);
 }
 
-function inclusionPercentagesForOtherInvestigators(
+async function inclusionPercentagesForOtherInvestigators(
     cardCode: string,
     investigatorCode: string,
-    decksByInvestigator: DecksByInvestigator,
-    countsByInvestigator: InvestigatorCounts,
     includeSideDeck: boolean,
-    monthsFilter: string[],
+    dateRange: [Date, Date],
+    db: DBAccessor
 ) {
     const ret: Record<string, number> = {};
-    for (const investigator of Object.keys(countsByInvestigator)) {
-        if (investigator === investigatorCode || !hasAccess(investigator, cardCode)) {
-            continue;
-        }
-        ret[investigator] = monthsFilter.reduce((acc, month) => {
-            const counts = countsByInvestigator[investigator][month]?.[cardCode];
-            acc += (includeSideDeck ? counts?.[1] : counts?.[0]) || 0;
-            return acc;
-        }, 0);
-        const nDecks = decksForInvestigatorInDateRange(monthsFilter, investigator, decksByInvestigator);
-        if (nDecks === 0) {
-            ret[investigator] = 0;
-        }
-        else {
-            ret[investigator] = (ret[investigator] / nDecks) * 100;
-        }
+    const decksForOtherInvestigatorsIncludingCard = await getNDecksForOtherInvestigatorsIncludingCard(
+        investigatorCode,
+        cardCode,
+        dateRange,
+        includeSideDeck,
+        db
+    );
+    const totalDecksByInvestigator = getNDecksForOtherInvestigators(investigatorCode, dateRange, db);
+
+    for (const row of decksForOtherInvestigatorsIncludingCard) {
+        ret[row.investigator_code] = row.deck_count;
     }
+    for (const row of await totalDecksByInvestigator) {
+        ret[row.investigator_code] = ((ret[row.investigator_code] ?? 0) / row.deck_count) * 100;
+    }
+    
     return ret;
 }
 
-export function computeRecommendationForCard(
+export async function getInvestigatorName(investigatorCode: string, db: DBAccessor): Promise<string> {
+    const results = await db('SELECT name FROM cards WHERE code = $1', [investigatorCode]);
+    return results[0].name;
+}
+
+export async function computeRecommendationForCard(
     cardCode: string,
     investigatorCode: string,
-    index: Index,
     includeSideDeck: boolean,
     analysisAlgorithm: RecommendationAnalysisAlgorithm,
     dateRange: [Date, Date],
     validDecks: Record<Id, 1>,
-): Recommendation | undefined {
-    const {
-        deckInclusions,
-        sideDeckInclusions,
-        decksByInvestigator,
-        investigatorNames,
-        deckInvestigatorCounts,
-    } = index;
-
-    const nInclusionsForInvestigator = findInclusionsOfCardForInvestigator(
+    db: DBAccessor
+): Promise<Recommendation | undefined> {
+    const investigatorName = await getInvestigatorName(investigatorCode, db);
+    const nInclusionsForInvestigator = await findInclusionsOfCardForInvestigator(
+        investigatorCode,
         cardCode,
-        deckInclusions,
-        sideDeckInclusions,
         includeSideDeck,
+        dateRange,
         validDecks,
+        db
     );
 
     const inclusionPercentage = (nInclusionsForInvestigator / Object.keys(validDecks).length) * 100;
@@ -118,16 +146,14 @@ export function computeRecommendationForCard(
     if (inclusionPercentage < 5) {
         return undefined;
     }
-    const monthsFilter = monthsInRange(dateRange);
 
     if (analysisAlgorithm === "percentile rank") {
-        const otherInclusions = inclusionPercentagesForOtherInvestigators(
+        const otherInclusions = await inclusionPercentagesForOtherInvestigators(
             cardCode,
             investigatorCode,
-            decksByInvestigator,
-            deckInvestigatorCounts,
             includeSideDeck,
-            monthsFilter
+            dateRange,
+            db
         );
 
         // If no other investigators have access to this card, we won't include it
@@ -142,7 +168,7 @@ export function computeRecommendationForCard(
             card_code: cardCode,
             recommendation: Math.floor(rank),
             ordering: rank, // Put cards with a higher float rank first, even though we display the integer rank
-            explanation: `The percentile rank of ${investigatorNames[investigatorCode]}'s use of this card compared to other investigators is ${Math.floor(rank)}`,
+            explanation: `The percentile rank of ${investigatorName}'s use of this card compared to other investigators is ${Math.floor(rank)}`,
         };
     }
     else if (analysisAlgorithm === "absolute percentage") {
@@ -150,7 +176,7 @@ export function computeRecommendationForCard(
             card_code: cardCode,
             recommendation: inclusionPercentage,
             ordering: inclusionPercentage,
-            explanation: `${inclusionPercentage.toFixed(2)}% of ${investigatorNames[investigatorCode]} decks (${nInclusionsForInvestigator}/${Object.keys(validDecks).length}) use this card`,
+            explanation: `${inclusionPercentage.toFixed(2)}% of ${investigatorName} decks (${nInclusionsForInvestigator}/${Object.keys(validDecks).length}) use this card`,
         };
     }
 }
@@ -159,65 +185,112 @@ export function firstDayOfNextMonth(date: Date) {
     return new Date(date.getFullYear(), date.getMonth() + 1, 1);
 }
 
-function validDecksForInvestigator(
+async function validDecksForInvestigator(
     investigatorCode: string,
-    decklists: Decklists,
-    decksByInvestigator: DecksByInvestigator,
-    deckInclusions: CardInclusions,
-    sideDeckInclusions: CardInclusions,
     includeSideDeck: boolean,
     dateRange: [Date, Date],
     requiredCards: string[],
-    excludedCards: string[]
-) {
-    const validDecks: Record<Id, 1> = {};
-    for (const month of Object.values(decksByInvestigator[investigatorCode])) {
-        for (const deckCode of Object.keys(month)) {
-            const publicationDate = new Date(decklists[deckCode].date_creation);
-            const correctInvestigator = decklists[deckCode].investigator_code === investigatorCode;
-            const inDateRange = publicationDate >= dateRange[0] && publicationDate < dateRange[1];
-            const hasRequiredCards = requiredCards.every((requiredCard) =>
-                decklists[deckCode].slots[requiredCard] ||
-                (includeSideDeck && !Array.isArray(decklists[deckCode].sideSlots) && decklists[deckCode].sideSlots[requiredCard]));
-            const doesNotHaveExcludedCards = !excludedCards.some((excludedCard) =>
-                deckInclusions[excludedCard]?.includes(deckCode) ||
-                (includeSideDeck && sideDeckInclusions[excludedCard]?.includes(deckCode)));
-            const valid = correctInvestigator && inDateRange && hasRequiredCards && doesNotHaveExcludedCards;
-            if (valid) {
-                validDecks[deckCode] = 1;
-            }
+    excludedCards: string[],
+    db: DBAccessor,
+): Promise<Record<Id, 1>> {
+    const requiredPlaceholders = requiredCards.length > 0 ? requiredCards.map((_, i) => `$${i + 1}`).join(', ') : null;
+    const excludedPlaceholders = excludedCards.length > 0 ? excludedCards.map((_, i) => `$${i + 1 + requiredCards.length}`).join(', ') : null;
+
+    let query = `
+        SELECT d.id
+        FROM decklists d
+        ${requiredPlaceholders ? `
+        JOIN (
+            SELECT id, card_code
+            FROM decklist_slots
+            WHERE card_code IN (${requiredPlaceholders})
+            ${includeSideDeck ? `
+            UNION ALL
+            SELECT id, card_code
+            FROM decklist_side_slots
+            WHERE card_code IN (${requiredPlaceholders})
+            ` : ''}
+        ) ds ON d.id = ds.id
+        ` : ''}
+        WHERE d.date_creation BETWEEN $${requiredCards.length + excludedCards.length + 1} AND $${requiredCards.length + excludedCards.length + 2}
+          AND d.investigator_code = $${requiredCards.length + excludedCards.length + 3}
+          ${excludedPlaceholders ? `
+          AND NOT EXISTS (
+              SELECT 1
+              FROM decklist_slots ds2
+              WHERE ds2.id = d.id
+                AND ds2.card_code IN (${excludedPlaceholders})
+          )
+          ${includeSideDeck ? `
+          AND NOT EXISTS (
+              SELECT 1
+              FROM decklist_side_slots sds2
+              WHERE sds2.id = d.id
+                AND sds2.card_code IN (${excludedPlaceholders})
+          `: ''}
+          )
+          ` : ''}
+        ${requiredPlaceholders ? `
+        GROUP BY d.id
+        HAVING COUNT(DISTINCT ds.card_code) = $${requiredCards.length + excludedCards.length + 4}
+        ` : ''}
+    `;
+
+    const params: (string | Date | number)[] = [
+        ...requiredCards,
+    ];
+
+    if (includeSideDeck) {
+        params.push(...requiredCards);
+    }
+
+    params.push(
+        dateRange[0],
+        dateRange[1],
+        investigatorCode);
+
+    if (excludedPlaceholders) {
+        params.push(...excludedCards);
+        if (includeSideDeck) {
+            params.push(...excludedCards);
         }
     }
-    return validDecks;
+
+    if (requiredPlaceholders) {
+        params.push(requiredCards.length);
+    }
+
+    const results = await db(query, params);
+    return results.reduce((acc: Record<Id, 1>, row: any) => {
+        acc[row.id] = 1;
+        return acc;
+    }, {});
 }
 
-export function getRecommendations(
+export async function getRecommendations(
     request: RecommendationRequest,
-    decklists: Decklists,
-    index: Index
+    db: DBAccessor,
 ) {
     const dateRange: [Date, Date] = [new Date(request.date_range[0]), firstDayOfNextMonth(new Date(request.date_range[1]))];
-    const validDecks = validDecksForInvestigator(
+    const validDecks = await validDecksForInvestigator(
         request.investigator_code,
-        decklists,
-        index.decksByInvestigator,
-        index.deckInclusions,
-        index.sideDeckInclusions,
         request.analyze_side_decks,
         dateRange,
         request.required_cards,
         request.excluded_cards,
+        db
     );
-    return request.cards_to_recommend.map((code) => {
+
+    const recommendationPromises = request.cards_to_recommend.map((code) => {
         return computeRecommendationForCard(
             code,
             request.investigator_code,
-            index,
             request.analyze_side_decks,
             request.analysis_algorithm,
             dateRange,
             validDecks,
+            db
         );
-    }).filter((recommendation) => recommendation !== undefined);
+    });
+    return (await Promise.all(recommendationPromises)).filter((recommendation) => recommendation !== undefined);
 }
-
