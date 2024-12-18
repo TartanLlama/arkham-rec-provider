@@ -29,7 +29,7 @@ async function findInclusionsOfCardForInvestigator(
 ): Promise<number> {
     const query = `
     SELECT DISTINCT d.id
-    FROM decklists_new d
+    FROM decklists d
     WHERE d.investigator_code = $1
       AND d.date_creation BETWEEN $2 AND $3
       AND (
@@ -62,7 +62,7 @@ async function getNDecksForOtherInvestigatorsIncludingCard(
 ) {
     const query = `
     SELECT d.investigator_code, COUNT(DISTINCT d.id) AS deck_count
-    FROM decklists_new d
+    FROM decklists d
     WHERE d.investigator_code != $1
       AND d.date_creation BETWEEN $2 AND $3
       AND (
@@ -187,68 +187,32 @@ async function validDecksForInvestigator(
     const excludedPlaceholders = excludedCards.length > 0 ? excludedCards.map((_, i) => `$${i + 1 + requiredCards.length}`).join(', ') : null;
 
     let query = `
-        SELECT d.id
-        FROM decklists d
-        ${requiredPlaceholders ? `
-        JOIN (
-            SELECT id, card_code
-            FROM decklist_slots
-            WHERE card_code IN (${requiredPlaceholders})
-            ${includeSideDeck ? `
-            UNION ALL
-            SELECT id, card_code
-            FROM decklist_side_slots
-            WHERE card_code IN (${requiredPlaceholders})
-            ` : ''}
-        ) ds ON d.id = ds.id
-        ` : ''}
-        WHERE d.date_creation BETWEEN $${requiredCards.length + excludedCards.length + 1} AND $${requiredCards.length + excludedCards.length + 2}
-          AND d.investigator_code = $${requiredCards.length + excludedCards.length + 3}
-          ${excludedPlaceholders ? `
-          AND NOT EXISTS (
-              SELECT 1
-              FROM decklist_slots ds2
-              WHERE ds2.id = d.id
-                AND ds2.card_code IN (${excludedPlaceholders})
-          )
-          ${includeSideDeck ? `
-          AND NOT EXISTS (
-              SELECT 1
-              FROM decklist_side_slots sds2
-              WHERE sds2.id = d.id
-                AND sds2.card_code IN (${excludedPlaceholders})
-          `: ''}
-          )
-          ` : ''}
-        ${requiredPlaceholders ? `
-        GROUP BY d.id
-        HAVING COUNT(DISTINCT ds.card_code) = $${requiredCards.length + excludedCards.length + 4}
-        ` : ''}
-    `;
+    SELECT d.id
+    FROM decklists d
+    WHERE d.date_creation BETWEEN $1 AND $2
+      AND d.investigator_code = $3
+      ${requiredPlaceholders ? `
+      AND (
+          ${requiredCards.map((_, i) => `d.slots ? $${i + 5}`).join(' OR ')}
+          ${includeSideDeck ? `OR ${requiredCards.map((_, i) => `d.side_slots ? $${i + 5}`).join(' OR ')}` : ''}
+      )
+      ` : ''}
+      ${excludedPlaceholders ? `
+      AND NOT (
+          ${excludedCards.map((_, i) => `d.slots ? $${i + 5 + requiredCards.length}`).join(' OR ')}
+          ${includeSideDeck ? `OR ${excludedCards.map((_, i) => `d.side_slots ? $${i + 5 + requiredCards.length}`).join(' OR ')}` : ''}
+      )
+      ` : ''}
+    ${requiredPlaceholders ? `
+    GROUP BY d.id
+    HAVING COUNT(DISTINCT jsonb_object_keys(d.slots)) = $${4 + excludedCards.length}}
+    ` : ''}
+`;
 
-    const params: (string | Date | number)[] = [
-        ...requiredCards,
+    const params = [
+        dateRange[0], dateRange[1], investigatorCode, ...excludedCards, requiredCards.length, ...requiredCards
     ];
 
-    if (includeSideDeck) {
-        params.push(...requiredCards);
-    }
-
-    params.push(
-        dateRange[0],
-        dateRange[1],
-        investigatorCode);
-
-    if (excludedPlaceholders) {
-        params.push(...excludedCards);
-        if (includeSideDeck) {
-            params.push(...excludedCards);
-        }
-    }
-
-    if (requiredPlaceholders) {
-        params.push(requiredCards.length);
-    }
 
     const results = await db(query, params);
     return results.reduce((acc: Record<Id, 1>, row: any) => {

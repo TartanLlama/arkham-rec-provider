@@ -13,42 +13,33 @@ const pgp: IMain = pgPromise({ "capSQL": true });
 async function initDecklistsTables(db: IDatabase<{}>) {
     await db.tx((t) => {
         const queries = [
-            `CREATE TABLE IF NOT EXISTS decklists (
-            id VARCHAR(128) PRIMARY KEY,
-            name TEXT,
-            date_creation DATE,
-            date_update DATE,
-            description_md TEXT,
-            investigator_code CHAR(6),
-            investigator_name TEXT,
-            source TEXT,
-            taboo_id INT)`
-            ,
+            `CREATE TABLE IF NOT EXISTS decklists(
+                id VARCHAR(128) PRIMARY KEY,
+                name TEXT,
+                date_creation DATE,
+                date_update DATE,
+                description_md TEXT,
+                investigator_code CHAR(6),
+                investigator_name TEXT,
+                source TEXT,
+                taboo_id INT,
+                slots JSONB,
+                side_slots JSONB
+            );`,
 
-            `CREATE TABLE IF NOT EXISTS decklist_slots (
-            id VARCHAR(128),
-            card_code CHAR(6),
-            count INT,
-            PRIMARY KEY (id, card_code),
-            FOREIGN KEY (id) REFERENCES decklists(id))`
-            ,
-
-            `CREATE TABLE IF NOT EXISTS decklist_side_slots (
-            id VARCHAR(128),
-            card_code CHAR(6),
-            count INT,
-            PRIMARY KEY (id, card_code),
-            FOREIGN KEY (id) REFERENCES decklists(id))`
-            ,
+            `CREATE INDEX IF NOT EXISTS idx_decklists_date_creation ON decklists USING btree (date_creation)`,
+            `CREATE INDEX IF NOT EXISTS idx_decklists_investigator_code ON decklists USING btree (investigator_code)`,
+            `CREATE INDEX IF NOT EXISTS idx_decklists_investigator_code_date_creation ON decklists USING btree (investigator_code, date_creation)`,
+            `CREATE INDEX IF NOT EXISTS idx_decklists_side_slots_gin ON decklists USING gin (side_slots jsonb_path_ops)`,
+            `CREATE INDEX IF NOT EXISTS idx_decklists_slots_gin ON decklists USING gin (slots jsonb_path_ops)`,
 
             `CREATE TABLE IF NOT EXISTS decklist_ingest_dates (
             ingest_date DATE PRIMARY KEY)`
         ];
         return t.batch(queries.map((query) => t.none(query)));
-    })
-        .catch(error => {
-            console.error(`Error creating tables: ${error}`);
-        });
+    }).catch(error => {
+        console.error(`Error creating tables: ${error}`);
+    });
     //TODO meta?
 }
 
@@ -83,20 +74,10 @@ const decklistColumns = new pgp.helpers.ColumnSet([
     'investigator_code',
     'investigator_name',
     'source',
-    'taboo_id'
+    'taboo_id',
+    'slots',
+    'side_slots'
 ], { table: 'decklists' });
-
-const decklistSlotsColumns = new pgp.helpers.ColumnSet([
-    'id',
-    'card_code',
-    'count'
-], { table: 'decklist_slots' });
-
-const decklistSideSlotsColumns = new pgp.helpers.ColumnSet([
-    'id',
-    'card_code',
-    'count'
-], { table: 'decklist_side_slots' });
 
 const ingestColumns = new pgp.helpers.ColumnSet(['ingest_date'],
     { table: 'decklist_ingest_dates' });
@@ -122,28 +103,9 @@ async function insertDataForDate(date: Date, db: IDatabase<{}>) {
             investigator_name: deck.investigator_name,
             source: deck.source,
             taboo_id: deck.taboo_id,
+            slots: deck.slots,
+            side_slots: Array.isArray(deck.sideSlots) ? {} : deck.sideSlots,
         };
-    });
-
-    const slotsData = data.flatMap((deck) => {
-        return Object.entries(deck.slots).map(([cardCode, count]) => {
-            return {
-                id: deck.id,
-                card_code: cardCode,
-                count: count
-            };
-        });
-    });
-    const sideSlotsData = data.flatMap((deck) => {
-        return Array.isArray(deck.sideSlots) ?
-            [] :
-            Object.entries(deck.sideSlots).map(([cardCode, count]) => {
-                return {
-                    id: deck.id,
-                    card_code: cardCode,
-                    count: count
-                };
-            });
     });
 
     await db.tx((t) => {
@@ -152,20 +114,56 @@ async function insertDataForDate(date: Date, db: IDatabase<{}>) {
             queries.push(pgp.helpers.insert(decklistData, decklistColumns));
         }
 
-        if (slotsData.length) {
-            queries.push(pgp.helpers.insert(slotsData, decklistSlotsColumns));
-        }
-
-        if (sideSlotsData.length) {
-            queries.push(pgp.helpers.insert(sideSlotsData, decklistSideSlotsColumns));
-        }
-
         queries.push(pgp.helpers.insert({ ingest_date: date }, ingestColumns));
 
         return t.batch(queries.map((query) => t.none(query)));
     }).catch(error => {
         console.error(`Error ingesting data for ${date}: ${error}`);
         console.error(url);
+    });
+}
+
+async function buildCardCountIndexes(db: IDatabase<{}>) {
+    const queries = [
+        `CREATE TABLE IF NOT EXISTS card_inclusion_counts (
+            investigator_code CHAR(6),
+            card_code CHAR(6),
+            creation_month DATE,
+            deck_count_with_card INT,
+            PRIMARY KEY (investigator_code, card_code, creation_month)
+        )`,
+
+        `CREATE TABLE IF NOT EXISTS investigator_deck_counts (
+            investigator_code CHAR(6),
+            creation_month DATE,
+            deck_count INT,
+            PRIMARY KEY (investigator_code, creation_month)
+        )`,
+
+        'DELETE FROM card_inclusion_counts',
+
+        'DELETE FROM investigator_deck_counts',
+
+        `INSERT INTO investigator_deck_counts (investigator_code, creation_month, deck_count)
+        SELECT d.investigator_code,
+               date_trunc('month', d.date_creation) AS creation_month,
+               COUNT(DISTINCT d.id) AS deck_count
+        FROM decklists d
+        GROUP BY d.investigator_code, creation_month`,
+
+        `INSERT INTO card_inclusion_counts (investigator_code, card_code, creation_month, deck_count_with_card)
+        SELECT d.investigator_code,
+               c.code AS card_code,
+               date_trunc('month', d.date_creation) AS creation_month,
+               COUNT(DISTINCT d.id) AS deck_count_with_card
+        FROM decklists d
+        JOIN cards c ON d.slots ? c.code OR d.side_slots ? c.code
+        GROUP BY d.investigator_code, c.code, creation_month`
+    ];
+    await db.tx((t) => {
+        return t.batch(queries.map((query) => t.none(query)));
+    }).catch(error => {
+        console.error(`Error building card count indexes: ${error}`);
     });
 }
 
@@ -179,12 +177,18 @@ async function syncDecklists(db: IDatabase<{}>) {
     //Get the start of the day in UTC
     date.setUTCHours(0, 0, 0, 0);
     const endDate = new Date(2016, 9, 2); //First decklists were uploaded on this date
+    let haveIngested = false;
     for (; date >= endDate; date.setDate(date.getDate() - 1)) {
         const haveIngestedResult = await db.query('SELECT * FROM decklist_ingest_dates WHERE ingest_date = $1', [date]);
         if (haveIngestedResult.length) {
-            return;
+            break;
         }
         await insertDataForDate(date, db);
+        haveIngested = true;
+    }
+
+    if (haveIngested) {
+        await buildCardCountIndexes(db);
     }
 }
 
