@@ -181,9 +181,10 @@ async function syncDecklists(db: IDatabase<{}>) {
     const endDate = new Date(2016, 9, 2); //First decklists were uploaded on this date
     for (; date >= endDate; date.setDate(date.getDate() - 1)) {
         const haveIngestedResult = await db.query('SELECT * FROM decklist_ingest_dates WHERE ingest_date = $1', [date]);
-        if (!haveIngestedResult.length) {
-            await insertDataForDate(date, db);
+        if (haveIngestedResult.length) {
+            return;
         }
+        await insertDataForDate(date, db);
     }
 }
 
@@ -204,7 +205,6 @@ async function syncCards(db: IDatabase<{}>) {
     const cardData = Array.from(
         new Map(
             data.data.all_card
-                .filter((card: Card) => card.type_code === 'investigator')
                 .map((card: Card) => [card.code, { code: card.code, name: card.real_name }])
         ).values()
     );
@@ -221,7 +221,7 @@ async function tableExists(db: IDatabase<{}>, tableName: string) {
             FROM information_schema.tables
             WHERE table_name = $1 
               AND table_schema = 'public') AS table_exists`, [tableName]);
-    return result.table_exists;
+    return result[0].table_exists;
 }
 
 async function syncData(db: IDatabase<{}>) {

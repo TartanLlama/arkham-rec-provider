@@ -29,21 +29,15 @@ async function findInclusionsOfCardForInvestigator(
 ): Promise<number> {
     const query = `
     SELECT DISTINCT d.id
-    FROM decklists d
-    JOIN (
-        SELECT id, card_code
-        FROM decklist_slots
-        WHERE card_code = $1
-        ${includeSideDeck ? `
-        UNION ALL
-        SELECT id, card_code
-        FROM decklist_side_slots
-        WHERE card_code = $2` : ''}
-    ) ds ON d.id = ds.id
-    WHERE d.investigator_code = $3
-      AND d.date_creation BETWEEN $4 AND $5
-    `;
-    const params = [cardCode, cardCode, investigatorCode, dateRange[0], dateRange[1]];
+    FROM decklists_new d
+    WHERE d.investigator_code = $1
+      AND d.date_creation BETWEEN $2 AND $3
+      AND (
+          d.slots ? $4
+          ${includeSideDeck ? `OR d.side_slots ? $4` : ''}
+      )
+`;
+    const params = [investigatorCode, dateRange[0], dateRange[1], cardCode];
     const res = await db(query, params);
     return res.filter((row: any) => validDecks[row.id]).length;
 }
@@ -60,31 +54,24 @@ async function getNDecksForOtherInvestigators(investigatorCode: string, dateRang
 }
 
 async function getNDecksForOtherInvestigatorsIncludingCard(
-    investigatorCode: string, 
-    cardCode: string, 
-    dateRange: [Date, Date], 
+    investigatorCode: string,
+    cardCode: string,
+    dateRange: [Date, Date],
     includeSideDeck: boolean,
     db: DBAccessor
 ) {
     const query = `
     SELECT d.investigator_code, COUNT(DISTINCT d.id) AS deck_count
-    FROM decklists d
-    JOIN (
-        SELECT id, card_code
-        FROM decklist_slots
-        WHERE card_code = $1
-        ${includeSideDeck ? `
-        UNION ALL
-        SELECT id, card_code
-        FROM decklist_side_slots
-        WHERE card_code = $2` : ''}
-    ) ds ON d.id = ds.id
-    WHERE d.investigator_code != $3
-      AND d.date_creation BETWEEN $4 AND $5
+    FROM decklists_new d
+    WHERE d.investigator_code != $1
+      AND d.date_creation BETWEEN $2 AND $3
+      AND (
+          d.slots ? $4
+          ${includeSideDeck ? `OR d.side_slots ? $4` : ''}
+      )
     GROUP BY d.investigator_code
 `;
-
-    const params = [cardCode, cardCode, investigatorCode, dateRange[0], dateRange[1]];
+    const params = [investigatorCode, dateRange[0], dateRange[1], cardCode];
     return await db(query, params);
 }
 
@@ -96,22 +83,25 @@ async function inclusionPercentagesForOtherInvestigators(
     db: DBAccessor
 ) {
     const ret: Record<string, number> = {};
-    const decksForOtherInvestigatorsIncludingCard = await getNDecksForOtherInvestigatorsIncludingCard(
-        investigatorCode,
-        cardCode,
-        dateRange,
-        includeSideDeck,
-        db
-    );
-    const totalDecksByInvestigator = getNDecksForOtherInvestigators(investigatorCode, dateRange, db);
+    const query = `
+    SELECT dc.investigator_code,
+           dc.deck_count,
+           COALESCE(cs.deck_count_with_card, 0) AS deck_count_with_card
+    FROM investigator_deck_counts dc
+    LEFT JOIN card_inclusion_counts cs ON dc.investigator_code = cs.investigator_code 
+                                         AND dc.creation_month = cs.creation_month 
+                                         AND cs.card_code = $4
+    WHERE dc.investigator_code != $1
+      AND dc.creation_month BETWEEN date_trunc('month', $2::DATE) AND date_trunc('month', $3::DATE)
+    GROUP BY dc.investigator_code, dc.deck_count, cs.deck_count_with_card
+`;
 
-    for (const row of decksForOtherInvestigatorsIncludingCard) {
-        ret[row.investigator_code] = row.deck_count;
+const params = [investigatorCode, dateRange[0], dateRange[1], cardCode];
+    const results = await db(query, params);
+    for (const row of results) {
+        ret[row.investigator_code] = row.deck_count_with_card / row.deck_count * 100;
     }
-    for (const row of await totalDecksByInvestigator) {
-        ret[row.investigator_code] = ((ret[row.investigator_code] ?? 0) / row.deck_count) * 100;
-    }
-    
+
     return ret;
 }
 
