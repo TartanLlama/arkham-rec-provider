@@ -5,6 +5,7 @@ import { connectToDatabase, pgp } from "./db";
 import { RecommendationApiResponse, RecommendationRequest } from './index.types';
 import { getRecommendations } from './recommendations';
 import { IDatabase } from 'pg-promise';
+import http from 'http';
 import https from 'https';
 import { readFileSync } from 'fs';
 
@@ -66,13 +67,16 @@ export async function runServer() {
             res.status(500).json({ error: 'Internal server error' });
         }
     });
+    app.get('/', (req, res) => {
+        res.send('Hello from the server!');
+    });
 
     app.use((req, res) => {
         res.status(404).send('404 Not Found');
     });
 
-    app.listen(port, () => {
-        console.log(`Server running at port ${port}`);
+    http.createServer(app).listen(port, () => {
+        console.log(`HTTP running at port ${port}`);
     });
 
     if (process.env.NODE_ENV === 'development') {
@@ -82,6 +86,8 @@ export async function runServer() {
             key: readFileSync(process.env.SSL_KEY_PATH as string),
             cert: readFileSync(process.env.SSL_CERT_PATH as string)
         };
-        https.createServer(options, app).listen(443);
+        https.createServer(options, app).listen(443, () => {
+            console.log('HTTPS server running at port 443');
+        });
     }
 }
