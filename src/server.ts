@@ -54,7 +54,7 @@ export async function runServer(port: number) {
 
     app.options('*', cors());
 
-    app.post('/recommendations', async (req, res) => {
+    app.post('/api/serve', async (req, res) => {
         try {
             const recs = await handleRequest(conn, req.body);
             res.status(200).json(recs);

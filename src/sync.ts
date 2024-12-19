@@ -300,7 +300,7 @@ async function syncCards(t: ITask<{}>) {
 }
 
 export async function syncData(forceReindex: boolean, db: IDatabase<{}>) {
-    db.tx(async (t) => {
+    await db.tx(async (t) => {
         await db.none(
             `CREATE TABLE IF NOT EXISTS cards (
                 code VARCHAR(6) PRIMARY KEY, 
