@@ -199,6 +199,25 @@ export type DeckProblem =
     | "deck_options_limit"
     | "investigator";
 
+export type DeckMeta = {
+    alternate_back?: string | null;
+    alternate_front?: string | null;
+    card_pool?: string | null;
+    deck_size_selected?: string | null;
+    extra_deck?: string | null;
+    faction_1?: string | null;
+    faction_2?: string | null;
+    faction_selected?: string | null;
+    option_selected?: string | null;
+    sealed_deck_name?: string | null;
+    sealed_deck?: string | null;
+    transform_into?: string | null;
+} & {
+    [key in `cus_${string}`]: string | null;
+} & {
+    [key in `attachments_${string}`]: string | null;
+};
+
 export type Deck = {
     date_creation: string;
     date_update: string;
