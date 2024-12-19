@@ -13,9 +13,8 @@ async function main() {
             await syncData(forceReindex, db);
         }
         else if (command === 'serve') {
-            const port = parseInt(process.argv[3] || '7071');
             try {
-                await runServer(port)
+                await runServer()
             } catch (error) {
                 console.error(`Error running server: ${error}`);
             }

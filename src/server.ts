@@ -5,6 +5,8 @@ import { connectToDatabase, pgp } from "./db";
 import { RecommendationApiResponse, RecommendationRequest } from './index.types';
 import { getRecommendations } from './recommendations';
 import { IDatabase } from 'pg-promise';
+import https from 'https';
+import { readFileSync } from 'fs';
 
 export function validateRecommendationRequest(reqData: RecommendationRequest): string | null {
     if (!reqData.canonical_investigator_code || typeof reqData.canonical_investigator_code !== 'string') {
@@ -45,7 +47,8 @@ export async function handleRequest(db: IDatabase<{}>, reqData: RecommendationRe
     return response;
 }
 
-export async function runServer(port: number) {
+export async function runServer() {
+    const port = process.env.PORT || 9190;
     const conn = await connectToDatabase();
     const app = express();
     app.use(helmet());
@@ -71,4 +74,14 @@ export async function runServer(port: number) {
     app.listen(port, () => {
         console.log(`Server running at port ${port}`);
     });
+
+    if (process.env.NODE_ENV === 'development') {
+        console.log('Running in development mode, not using HTTPS');
+    } else {
+        const options = {
+            key: readFileSync(process.env.SSL_KEY_PATH as string),
+            cert: readFileSync(process.env.SSL_CERT_PATH as string)
+        };
+        https.createServer(options, app).listen(443);
+    }
 }
