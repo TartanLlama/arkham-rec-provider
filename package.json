@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "build/index.js",
   "scripts": {
-    "serve": "tsc && node build/index.js serve",
-    "sync": "tsc && node build/index.js sync",
+    "serve": "tsc && node build/main.js serve",
+    "sync": "tsc && node build/main.js sync",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Sy Brand",

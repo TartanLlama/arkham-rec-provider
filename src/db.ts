@@ -1,7 +1,4 @@
 import pgPromise, { IMain } from "pg-promise";
-import dotenv from 'dotenv';
-
-dotenv.config();
 
 export const pgp: IMain = pgPromise({ "capSQL": true });
 export async function connectToDatabase() {

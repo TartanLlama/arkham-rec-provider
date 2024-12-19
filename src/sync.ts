@@ -299,8 +299,7 @@ async function syncCards(t: ITask<{}>) {
     return t.none(pgp.helpers.insert(cardData, cardColumns));
 }
 
-export async function syncData(forceReindex: boolean) {
-    const db = await connectToDatabase();
+export async function syncData(forceReindex: boolean, db: IDatabase<{}>) {
     db.tx(async (t) => {
         await db.none(
             `CREATE TABLE IF NOT EXISTS cards (
@@ -336,6 +335,8 @@ export async function syncData(forceReindex: boolean) {
             console.log('Building card count indexes...');
             await buildCardCountIndexes(t);
         }
+
+        console.log('Sync complete');
     }).catch(error => {
         console.error(`Error syncing data: ${error}`);
     });

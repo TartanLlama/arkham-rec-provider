@@ -1,29 +1,41 @@
-import { runServer } from './server';
-import { syncData } from './sync';
-
+import { app } from "@azure/functions";
+import { handleRequest } from "./server";
+import { connectToDatabase } from "./db";
+import { RecommendationRequest } from "./index.types";
+import { syncData } from "./sync";
 
 async function main() {
-    if (process.argv.length > 2) {
-        const command = process.argv[2];
-        if (command === 'sync') {
-            const forceReindex = process.argv.includes('force-reindex');
-            await syncData(forceReindex);
-        }
-        else if (command === 'serve') {
-            const port = parseInt(process.argv[3] || '9191');
+    const conn = await connectToDatabase();
+    app.http('serve', {
+        methods: ['POST'],
+        handler: async (request, context) => {
             try {
-                await runServer(port)
+                const reqData = (await request.json()) as RecommendationRequest;
+                const response = await handleRequest(conn, reqData);
+                return {
+                    status: 200,
+                    body: JSON.stringify(response),
+                };
             } catch (error) {
-                console.error(`Error running server: ${error}`);
+                console.error(`Error getting recommendations: ${error}:${context}`);
+                return {
+                    status: 500,
+                    body: JSON.stringify({
+                        status: 500,
+                        error,
+                    }),
+                };
             }
-        }
-        else {
-            console.error('Invalid command, expected "sync" or "serve"');
-        }
-    }
-    else {
-        console.error('No command provided, expected "sync" or "serve"');
-    }
-}
+        },
+    });
 
+    app.timer('sync', {
+        runOnStartup: true,
+        useMonitor: false,
+        schedule: '0 0 0 * * *',
+        handler: async (timerBinding, context) => {
+            await syncData(false, conn);
+        },
+    });
+}
 main();
