@@ -4,6 +4,7 @@ import cors from 'cors';
 import { connectToDatabase, pgp } from "./db";
 import { RecommendationApiResponse, RecommendationRequest } from './index.types';
 import { getRecommendations } from './recommendations';
+import { IDatabase } from 'pg-promise';
 
 export function validateRecommendationRequest(reqData: RecommendationRequest): string | null {
     if (!reqData.canonical_investigator_code || typeof reqData.canonical_investigator_code !== 'string') {
@@ -21,6 +22,29 @@ export function validateRecommendationRequest(reqData: RecommendationRequest): s
     return null;
 }
 
+export async function handleRequest(db: IDatabase<{}>, reqData: RecommendationRequest): Promise<RecommendationApiResponse> {
+    const validationError = validateRecommendationRequest(reqData);
+    if (validationError) {
+        throw new Error(validationError);
+    }
+
+    const nDecks = await db.query(`SELECT COUNT(*) as deck_count FROM decklists`);
+    const recommendations = await getRecommendations(
+        reqData,
+        db,
+        pgp
+    );
+    const response: RecommendationApiResponse = {
+        data: {
+            recommendations: {
+                decks_analyzed: nDecks[0].deck_count,
+                recommendations: recommendations
+            }
+        }
+    };
+    return response;
+}
+
 export async function runServer(port: number) {
     const conn = await connectToDatabase();
     const app = express();
@@ -32,29 +56,8 @@ export async function runServer(port: number) {
 
     app.post('/recommendations', async (req, res) => {
         try {
-            const reqData = req.body as RecommendationRequest;
-
-            const validationError = validateRecommendationRequest(reqData);
-            if (validationError) {
-                res.status(400).json({ error: validationError });
-                return;
-            }
-
-            const nDecks = await conn.query(`SELECT COUNT(*) as deck_count FROM decklists`);
-            const recommendations = await getRecommendations(
-                reqData,
-                conn,
-                pgp
-            );
-            const response: RecommendationApiResponse = {
-                data: {
-                    recommendations: {
-                        decks_analyzed: nDecks[0].deck_count,
-                        recommendations: recommendations
-                    }
-                }
-            };
-            res.status(200).json(response);
+            const recs = await handleRequest(conn, req.body);
+            res.status(200).json(recs);
         } catch (error) {
             console.error(`Error getting recommendations: ${error}`);
             res.status(500).json({ error: 'Internal server error' });
