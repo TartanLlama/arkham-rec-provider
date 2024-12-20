@@ -5,8 +5,6 @@ import { connectToDatabase, pgp } from "./db";
 import { RecommendationApiResponse, RecommendationRequest } from './index.types';
 import { getRecommendations } from './recommendations';
 import { IDatabase } from 'pg-promise';
-import http from 'http';
-import { readFileSync } from 'fs';
 
 export function validateRecommendationRequest(reqData: RecommendationRequest): string | null {
     if (!reqData.canonical_investigator_code || typeof reqData.canonical_investigator_code !== 'string') {
@@ -71,7 +69,7 @@ export async function runServer() {
         res.status(404).send('404 Not Found');
     });
 
-    http.createServer(app).listen(port, () => {
+    app.listen(port, () => {
         console.log(`HTTP running at port ${port}`);
     });
 
