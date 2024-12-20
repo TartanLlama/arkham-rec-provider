@@ -6,7 +6,6 @@ import { RecommendationApiResponse, RecommendationRequest } from './index.types'
 import { getRecommendations } from './recommendations';
 import { IDatabase } from 'pg-promise';
 import http from 'http';
-import https from 'https';
 import { readFileSync } from 'fs';
 
 export function validateRecommendationRequest(reqData: RecommendationRequest): string | null {
@@ -76,15 +75,5 @@ export async function runServer() {
         console.log(`HTTP running at port ${port}`);
     });
 
-    if (process.env.NODE_ENV === 'development') {
-        console.log('Running in development mode, not using HTTPS');
-    } else {
-        const options = {
-            key: readFileSync(process.env.SSL_KEY_PATH as string),
-            cert: readFileSync(process.env.SSL_CERT_PATH as string)
-        };
-        https.createServer(options, app).listen(443, () => {
-            console.log('HTTPS server running at port 443');
-        });
-    }
+    console.log('Running in development mode, not using HTTPS');
 }
