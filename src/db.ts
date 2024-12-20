@@ -7,7 +7,7 @@ export async function connectToDatabase() {
         user: process.env.RECDB_USER,
         password: process.env.RECDB_PASS,
         database: process.env.RECDB_NAME,
-        ssl: true
+        ssl: process.env.NODE_ENV !== 'development'
     });
     return conn;
 }

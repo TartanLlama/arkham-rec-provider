@@ -259,6 +259,15 @@ async function buildCardCountIndexes(t: ITask<{}>) {
         JOIN cards c ON d.slots ? c.code OR d.side_slots ? c.code
         GROUP BY d.canonical_investigator_code, c.code, creation_month`
     );
+
+    await t.none(`
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'recommendation_cache') THEN
+                TRUNCATE TABLE recommendation_cache;
+            END IF;
+        END $$;
+    `);
 }
 
 async function syncDecklists(db: ITask<{}>): Promise<boolean> {

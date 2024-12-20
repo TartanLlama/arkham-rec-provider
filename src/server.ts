@@ -2,12 +2,13 @@ import helmet from 'helmet';
 import express from 'express';
 import cors from 'cors';
 import { connectToDatabase, pgp } from "./db";
-import { RecommendationApiResponse, RecommendationRequest } from './index.types';
+import { Recommendation, RecommendationApiResponse, RecommendationRequest } from './index.types';
 import { getRecommendations } from './recommendations';
 import { IDatabase } from 'pg-promise';
 import http from 'http';
 import https from 'https';
 import { readFileSync } from 'fs';
+import { createHash } from 'crypto';
 
 export function validateRecommendationRequest(reqData: RecommendationRequest): string | null {
     if (!reqData.canonical_investigator_code || typeof reqData.canonical_investigator_code !== 'string') {
@@ -25,18 +26,33 @@ export function validateRecommendationRequest(reqData: RecommendationRequest): s
     return null;
 }
 
+const cacheColumns = new pgp.helpers.ColumnSet(['request_hash', {name: 'response', mod: ":json"}], { table: 'recommendation_cache' });
+
 export async function handleRequest(db: IDatabase<{}>, reqData: RecommendationRequest): Promise<RecommendationApiResponse> {
     const validationError = validateRecommendationRequest(reqData);
     if (validationError) {
         throw new Error(validationError);
     }
 
+    const requestHash = createHash('sha256').update(JSON.stringify(reqData)).digest('base64');
+    const cachedResponse = await db.oneOrNone(`
+        SELECT response FROM recommendation_cache 
+        WHERE request_hash = $1`,
+        [requestHash]);
+
     const nDecks = await db.query(`SELECT COUNT(*) as deck_count FROM decklists`);
-    const recommendations = await getRecommendations(
-        reqData,
-        db,
-        pgp
-    );
+    const recommendations = cachedResponse?.response ??
+        await getRecommendations(
+            reqData,
+            db,
+            pgp
+        );
+    if (!cachedResponse) {
+        await db.none(pgp.helpers.insert({
+            request_hash: requestHash,
+            response: recommendations
+        }, cacheColumns));
+    }
     const response: RecommendationApiResponse = {
         data: {
             recommendations: {
@@ -48,9 +64,18 @@ export async function handleRequest(db: IDatabase<{}>, reqData: RecommendationRe
     return response;
 }
 
+async function initCache(db: IDatabase<{}>) {
+    await db.none(`CREATE TABLE IF NOT EXISTS recommendation_cache (
+        request_hash VARCHAR(44), 
+        response JSONB,
+        PRIMARY KEY (request_hash)
+    )`);
+}
+
 export async function runServer() {
     const port = process.env.PORT || 9190;
     const conn = await connectToDatabase();
+    await initCache(conn);
     const app = express();
     app.use(helmet());
     app.use(express.json({ limit: '10kb' }));
