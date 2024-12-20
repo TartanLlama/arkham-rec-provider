@@ -73,7 +73,7 @@ async function initCache(db: IDatabase<{}>) {
 }
 
 export async function runServer() {
-    const port = process.env.PORT || 9190;
+    const port = process.env.RECDB_PORT || 9190;
     const conn = await connectToDatabase();
     await initCache(conn);
     const app = express();
