@@ -67,9 +67,6 @@ export async function runServer() {
             res.status(500).json({ error: 'Internal server error' });
         }
     });
-    app.get('/', (req, res) => {
-        res.send('Hello from the server!');
-    });
 
     app.use((req, res) => {
         res.status(404).send('404 Not Found');
