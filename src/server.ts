@@ -5,6 +5,9 @@ import { connectToDatabase, pgp } from "./db";
 import { RecommendationApiResponse, RecommendationRequest } from './index.types';
 import { getRecommendations } from './recommendations';
 import { IDatabase } from 'pg-promise';
+import http from 'http';
+import https from 'https';
+import { readFileSync } from 'fs';
 
 export function validateRecommendationRequest(reqData: RecommendationRequest): string | null {
     if (!reqData.canonical_investigator_code || typeof reqData.canonical_investigator_code !== 'string') {
@@ -69,9 +72,19 @@ export async function runServer() {
         res.status(404).send('404 Not Found');
     });
 
-    app.listen(port, () => {
+    http.createServer(app).listen(port, () => {
         console.log(`HTTP running at port ${port}`);
     });
 
-    console.log('Running in development mode, not using HTTPS');
+    if (process.env.NODE_ENV === 'development') {
+        console.log('Running in development mode, not using HTTPS');
+    } else {
+        const options = {
+            key: readFileSync(process.env.SSL_KEY_PATH as string),
+            cert: readFileSync(process.env.SSL_CERT_PATH as string)
+        };
+        https.createServer(options, app).listen(443, () => {
+            console.log('HTTPS server running at port 443');
+        });
+    }
 }
