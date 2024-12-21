@@ -40,6 +40,7 @@ export async function handleRequest(db: IDatabase<{}>, reqData: RecommendationRe
         WHERE request_hash = $1`,
         [requestHash]);
 
+    reqData.cards_to_recommend.filter(card => !reqData.required_cards.includes(card));
     const nDecks = await db.query(`SELECT COUNT(*) as deck_count FROM decklists`);
     const recommendations = cachedResponse?.response ??
         await getRecommendations(
