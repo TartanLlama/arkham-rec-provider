@@ -41,7 +41,7 @@ export async function handleRequest(db: IDatabase<{}>, reqData: RecommendationRe
         [requestHash]);
 
     reqData.cards_to_recommend = reqData.cards_to_recommend.filter(card => !reqData.required_cards.includes(card));
-    const nDecks = await db.query(`SELECT COUNT(*) as deck_count FROM decklists`);
+    
     const recommendations = cachedResponse?.response ??
         await getRecommendations(
             reqData,
@@ -56,10 +56,7 @@ export async function handleRequest(db: IDatabase<{}>, reqData: RecommendationRe
     }
     const response: RecommendationApiResponse = {
         data: {
-            recommendations: {
-                decks_analyzed: nDecks[0].deck_count,
-                recommendations: recommendations
-            }
+            recommendations: recommendations
         }
     };
     return response;

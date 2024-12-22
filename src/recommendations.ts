@@ -233,10 +233,20 @@ export async function getRecommendations(
                     explanation: `The percentile rank of ${investigatorName}'s use of this card compared to other investigators is ${Math.floor(rank)}`,
                 });
             }
-            return recommendations;
+            const decksAnalyzed = await t.one(`
+                SELECT SUM(deck_count) AS decks_analyzed
+                FROM investigator_deck_counts
+                WHERE creation_month BETWEEN date_trunc('month', $1::DATE) AND date_trunc('month', $2::DATE)
+            `, dateRange);
+            return {
+                decks_analyzed: decksAnalyzed.decks_analyzed,
+                recommendations: recommendations,
+            };
         }
         else if (request.analysis_algorithm === "absolute percentage") {
-            return inclusionsForInvestigator.flatMap((inc) => {
+            // Number of decks analysed will be the same for all cards
+            const decksAnalyzed = inclusionsForInvestigator[0]?.decks_analyzed || 0;
+            const recommendations = inclusionsForInvestigator.flatMap((inc) => {
                 const inclusionPercentage = inc.decks_with_card / inc.decks_analyzed * 100;
 
                 return [{
@@ -246,6 +256,10 @@ export async function getRecommendations(
                     explanation: `${inclusionPercentage.toFixed(2)}% of ${investigatorName} decks (${inc.decks_with_card}/${inc.decks_analyzed}) use this card`,
                 }];
             });
+            return {
+                decks_analyzed: decksAnalyzed,
+                recommendations: recommendations,
+            }
         }
         else {
             throw new Error(`Unknown analysis algorithm: ${request.analysis_algorithm}`);
