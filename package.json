@@ -5,6 +5,7 @@
   "scripts": {
     "serve": "tsc && node build/main.js serve",
     "sync": "tsc && node build/main.js sync",
+    "clear-cache": "tsc && node build/main.js clear-cache",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Sy Brand",

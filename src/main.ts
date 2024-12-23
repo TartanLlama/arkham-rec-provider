@@ -19,6 +19,11 @@ async function main() {
                 console.error(`Error running server: ${error}`);
             }
         }
+        else if (command === 'clear-cache') {
+            const db = await connectToDatabase();
+            await db.none('TRUNCATE recommendation_cache');
+            console.log('Cache cleared');
+        }
         else {
             console.error('Invalid command, expected "sync" or "serve"');
         }
