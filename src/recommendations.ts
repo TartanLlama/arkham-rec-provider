@@ -51,22 +51,23 @@ async function computeInclusionPercentagesForInvestigator(
         FROM decklists
         WHERE date_creation BETWEEN $1 AND $2
             AND canonical_investigator_code = $3
-            ${requiredCards.length ? ` 
-                AND id IN ( 
-                    SELECT decklist_id 
-                    FROM decklist_slots 
-                    WHERE card_code = ANY($4::text[]) 
-                    GROUP BY decklist_id 
-                    HAVING COUNT(DISTINCT card_code) = ${requiredCards.length} 
-                ) 
-            ${includeSideDeck ? ` 
-                OR id IN ( 
-                    SELECT decklist_id 
-                    FROM decklist_side_slots 
-                    WHERE card_code = ANY($4::text[]) 
-                    GROUP BY decklist_id 
-                    HAVING COUNT(DISTINCT card_code) = ${requiredCards.length} 
-                )` : ''}
+            ${requiredCards.length ? `
+                AND id IN (
+                    SELECT decklist_id
+                    FROM (
+                        SELECT decklist_id, card_code
+                        FROM decklist_slots
+                        WHERE card_code = ANY($4::text[])
+                        ${includeSideDeck ? `
+                        UNION ALL
+                        SELECT decklist_id, card_code
+                        FROM decklist_side_slots
+                        WHERE card_code = ANY($4::text[])
+                        ` : ''}
+                    ) combined_slots
+                    GROUP BY decklist_id
+                    HAVING COUNT(DISTINCT card_code) = ${requiredCards.length}
+                )
             ` : ''}
     ),
     slots AS ( 
@@ -76,13 +77,14 @@ async function computeInclusionPercentagesForInvestigator(
                 SELECT 1 FROM filtered_decks fd 
                 WHERE fd.id = ds.decklist_id 
             ) 
+        ${includeSideDeck ? `
         UNION ALL 
         SELECT dss.decklist_id, dss.card_code 
         FROM decklist_side_slots dss 
         WHERE EXISTS ( 
             SELECT 1 FROM filtered_decks fd 
             WHERE fd.id = dss.decklist_id 
-        ) 
+        )` : ''} 
     )
     SELECT t.card_code,
            $3 AS canonical_investigator_code,
@@ -166,7 +168,7 @@ export async function getRecommendations(
         // Create the temporary table
         await t.none(`
             CREATE TEMP TABLE cards_to_recommend (
-                card_code CHAR(6) PRIMARY KEY
+                card_code VARCHAR(6) PRIMARY KEY
             ) ON COMMIT DROP;
         `);
 
