@@ -187,6 +187,12 @@ export async function getRecommendations(
             request.analysis_algorithm === "percentile rank",
             t
         );
+        if (inclusionsForInvestigator.length === 0) {
+            return {
+                decks_analyzed: 0,
+                recommendations: [],
+            };
+        }
         const investigatorName = await getInvestigatorName(request.canonical_investigator_code, t);
 
         if (request.analysis_algorithm === "percentile rank") {
