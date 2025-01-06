@@ -149,8 +149,11 @@ async function computeInclusionPercentagesForAllInvestigators(
     return await db.query(query, params);
 }
 
-export async function getInvestigatorName(investigatorCode: string, db: ITask<{}>): Promise<string> {
+export async function getInvestigatorName(investigatorCode: string, db: ITask<{}>): Promise<string|null> {
     const results = await db.query('SELECT investigator_name FROM decklists WHERE canonical_investigator_code = $1 LIMIT 1', [investigatorCode]);
+    if (results.length === 0) {
+        return null;
+    }
     return results[0].investigator_name;
 }
 
@@ -187,13 +190,14 @@ export async function getRecommendations(
             request.analysis_algorithm === "percentile rank",
             t
         );
-        if (inclusionsForInvestigator.length === 0) {
+        
+        const investigatorName = await getInvestigatorName(request.canonical_investigator_code, t);
+        if (investigatorName === null) {
             return {
                 decks_analyzed: 0,
                 recommendations: [],
             };
         }
-        const investigatorName = await getInvestigatorName(request.canonical_investigator_code, t);
 
         if (request.analysis_algorithm === "percentile rank") {
             const inclusions = await computeInclusionPercentagesForAllInvestigators(
