@@ -52,22 +52,7 @@ async function computeInclusionPercentagesForInvestigator(
         WHERE date_creation BETWEEN $1 AND $2
             AND canonical_investigator_code = $3
             ${requiredCards.length ? `
-                AND id IN (
-                    SELECT decklist_id
-                    FROM (
-                        SELECT decklist_id, card_code
-                        FROM decklist_slots
-                        WHERE card_code = ANY($4::text[])
-                        ${includeSideDeck ? `
-                        UNION ALL
-                        SELECT decklist_id, card_code
-                        FROM decklist_side_slots
-                        WHERE card_code = ANY($4::text[])
-                        ` : ''}
-                    ) combined_slots
-                    GROUP BY decklist_id
-                    HAVING COUNT(DISTINCT card_code) = ${requiredCards.length}
-                )
+                AND ${includeSideDeck ? '(slots || side_slots)' : 'slots'} ?& $4::text[]
             ` : ''}
     ),
     slots AS ( 
