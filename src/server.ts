@@ -91,6 +91,14 @@ export async function runServer() {
         }
     });
 
+    app.use('/.well-known/acme-challenge', express.static('.well-known/acme-challenge', {
+        dotfiles: 'allow',
+        setHeaders: (res) => {
+            res.setHeader('Content-Type', 'text/plain');
+        }
+    }));
+
+
     app.use((req, res) => {
         res.status(404).send('404 Not Found');
     });
